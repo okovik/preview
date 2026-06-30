@@ -18,8 +18,12 @@ const LoopStep = Object.freeze({
 });
 
 const TUNING = Object.freeze({
-  playerSpeed: 205,
-  arenaPlayerSpeed: 225,
+  walkSpeed: 185,
+  runSpeed: 285,
+  arenaWalkSpeed: 205,
+  arenaRunSpeed: 245,
+  jumpVelocity: 520,
+  gravity: 1450,
   enemySpeed: 78,
   playerHealth: 100,
   playerEnergy: 100,
@@ -52,7 +56,7 @@ const game = {
   mode: GameMode.EXPLORE,
   loopStep: LoopStep.FIND_SEED,
   camera: { x: 0, y: 0 },
-  player: { x: 0, y: 160, r: 18, hp: TUNING.playerHealth, energy: TUNING.playerEnergy, facing: 0 },
+  player: { x: 0, y: 160, z: 0, vz: 0, r: 18, hp: TUNING.playerHealth, energy: TUNING.playerEnergy, facing: 0, isRunning: false, isGrounded: true },
   companion: { unlocked: false, x: 0, y: 0, r: 13, abilityCooldown: 0, abilityMaxCooldown: 3.2 },
   projectiles: [],
   effects: [],
@@ -61,7 +65,7 @@ const game = {
 function resetGame() {
   game.mode = GameMode.EXPLORE;
   game.loopStep = LoopStep.FIND_SEED;
-  Object.assign(game.player, { ...level.spawn, hp: TUNING.playerHealth, energy: TUNING.playerEnergy, facing: 0 });
+  Object.assign(game.player, { ...level.spawn, z: 0, vz: 0, hp: TUNING.playerHealth, energy: TUNING.playerEnergy, facing: 0, isRunning: false, isGrounded: true });
   Object.assign(game.companion, { unlocked: false, x: level.spawn.x - 48, y: level.spawn.y + 42, abilityCooldown: 0 });
   Object.assign(level.seed, { collected: false, pulse: 0 });
   Object.assign(level.enemy, { x: 485, y: -115, hp: level.enemy.maxHp, defeated: false, active: false, stun: 0 });
@@ -73,36 +77,88 @@ function resetGame() {
 
 function update(dt) {
   updateMessage(dt);
-  updatePlayer(dt);
-  updateSeed(dt);
+  PlayerMovement.update(dt);
+  PlayerInteraction.update(dt);
   updateCompanion(dt);
   updateArenaTrigger();
   updateEnemy(dt);
-  updateProjectiles(dt);
+  PlayerCombat.updateProjectiles(dt);
   updateEffects(dt);
   updateCamera(dt);
   updateHud();
 }
 
-function updatePlayer(dt) {
-  if (game.mode === GameMode.DOWNED) return;
+const Input = {
+  moveVector() {
+    let x = 0;
+    let y = 0;
+    if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+    const magnitude = Math.hypot(x, y);
+    return magnitude ? { x: x / magnitude, y: y / magnitude, magnitude } : { x: 0, y: 0, magnitude: 0 };
+  },
+  wantsRun() {
+    return keys.has('ShiftLeft') || keys.has('ShiftRight');
+  },
+};
 
-  const move = getMoveVector();
-  const speed = game.mode === GameMode.ARENA ? TUNING.arenaPlayerSpeed : TUNING.playerSpeed;
-  game.player.x = clamp(game.player.x + move.x * speed * dt, -WORLD.width / 2, WORLD.width / 2);
-  game.player.y = clamp(game.player.y + move.y * speed * dt, -WORLD.height / 2, WORLD.height / 2);
-  if (move.magnitude > 0) game.player.facing = Math.atan2(move.y, move.x);
+const PlayerMovement = {
+  update(dt) {
+    if (game.mode === GameMode.DOWNED) return;
 
-  if (level.arena.active) keepPlayerInsideArena();
-  game.player.energy = Math.min(TUNING.playerEnergy, game.player.energy + 12 * dt);
-}
+    const move = Input.moveVector();
+    const speed = this.currentSpeed();
+    game.player.x = clamp(game.player.x + move.x * speed * dt, -WORLD.width / 2, WORLD.width / 2);
+    game.player.y = clamp(game.player.y + move.y * speed * dt, -WORLD.height / 2, WORLD.height / 2);
+    game.player.isRunning = Input.wantsRun() && move.magnitude > 0 && game.player.isGrounded;
+    if (move.magnitude > 0) game.player.facing = Math.atan2(move.y, move.x);
+
+    this.updateJump(dt);
+    if (level.arena.active) keepPlayerInsideArena();
+    game.player.energy = Math.min(TUNING.playerEnergy, game.player.energy + 12 * dt);
+  },
+  currentSpeed() {
+    if (game.mode === GameMode.ARENA) return Input.wantsRun() ? TUNING.arenaRunSpeed : TUNING.arenaWalkSpeed;
+    return Input.wantsRun() ? TUNING.runSpeed : TUNING.walkSpeed;
+  },
+  jump() {
+    if (game.mode === GameMode.DOWNED || !game.player.isGrounded) return;
+    game.player.vz = TUNING.jumpVelocity;
+    game.player.isGrounded = false;
+  },
+  updateJump(dt) {
+    if (game.player.isGrounded) return;
+    game.player.z += game.player.vz * dt;
+    game.player.vz -= TUNING.gravity * dt;
+    if (game.player.z <= 0) {
+      game.player.z = 0;
+      game.player.vz = 0;
+      game.player.isGrounded = true;
+    }
+  },
+};
+
+const PlayerInteraction = {
+  update(dt) {
+    updateSeed(dt);
+  },
+  interact() {
+    if (!level.seed.collected && distance(game.player, level.seed) <= game.player.r + level.seed.r + 34) {
+      collectSeed();
+      return;
+    }
+    summonCompanion();
+  },
+};
 
 function updateSeed(dt) {
   if (level.seed.collected) return;
   level.seed.pulse += dt * 5;
 
-  if (distance(game.player, level.seed) <= game.player.r + level.seed.r + 10) {
-    collectSeed();
+  if (distance(game.player, level.seed) <= game.player.r + level.seed.r + 34) {
+    game.loopStep = LoopStep.FIND_SEED;
   }
 }
 
@@ -173,6 +229,18 @@ function updateEnemy(dt) {
     }
   }
 }
+
+const PlayerCombat = {
+  basicAttack() {
+    fireBasicAttack();
+  },
+  companionAbility() {
+    fireCompanionAbility();
+  },
+  updateProjectiles(dt) {
+    updateProjectiles(dt);
+  },
+};
 
 function fireBasicAttack() {
   if (game.mode === GameMode.DOWNED || game.player.energy < TUNING.basicAttackCost) return;
@@ -276,7 +344,9 @@ function updateMessage(dt) {
 
 function updateHud() {
   const objectives = {
-    [LoopStep.FIND_SEED]: '1/9 Explore the mushroom level and find the glowing spore seed.',
+    [LoopStep.FIND_SEED]: distance(game.player, level.seed) <= game.player.r + level.seed.r + 34
+      ? '1-3/9 Spore seed found. Press E to collect it.'
+      : '1/9 Explore the mushroom level and find the glowing spore seed.',
     [LoopStep.SUMMON_COMPANION]: '2-4/9 Seed collected. Press E to summon your companion creature.',
     [LoopStep.FIND_ENEMY]: '5/9 Companion active. Explore east and approach the corrupted guardian.',
     [LoopStep.FIGHT_ENEMY]: '6-7/9 Arena combat: Space for basic attacks, Q for companion ability.',
@@ -287,23 +357,13 @@ function updateHud() {
   statsEl.innerHTML = `
     <strong>Core Loop Status</strong><br />
     Mode: ${game.mode}<br />
+    Movement: ${game.player.isRunning ? 'Running' : 'Walking'} ${game.player.isGrounded ? '' : '(Jumping)'}<br />
     Health: ${Math.ceil(game.player.hp)} / ${TUNING.playerHealth}<br />
     Energy: ${Math.ceil(game.player.energy)} / ${TUNING.playerEnergy}<br />
     Seed: ${level.seed.collected ? 'Collected' : 'Unfound'}<br />
     Companion: ${game.companion.unlocked ? `Ready (${game.companion.abilityCooldown.toFixed(1)}s)` : 'Locked'}<br />
     Enemy: ${level.enemy.defeated ? 'Defeated' : `${Math.ceil(level.enemy.hp)} HP`}
   `;
-}
-
-function getMoveVector() {
-  let x = 0;
-  let y = 0;
-  if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
-  if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
-  const magnitude = Math.hypot(x, y);
-  return magnitude ? { x: x / magnitude, y: y / magnitude, magnitude } : { x: 0, y: 0, magnitude: 0 };
 }
 
 function showMessage(text, duration = 2800) {
@@ -433,16 +493,24 @@ function drawArenaPlaceholder(time) {
 }
 
 function drawPlayerPlaceholder() {
-  drawGlowCircle(game.player.x, game.player.y, game.player.r + 12, '#9f7cff', 0.22);
-  ctx.fillStyle = '#dddcff';
+  const lift = game.player.z * 0.35;
+  ctx.save();
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = '#000000';
   ctx.beginPath();
-  ctx.arc(game.player.x, game.player.y, game.player.r, 0, Math.PI * 2);
+  ctx.ellipse(game.player.x, game.player.y + 14, game.player.r * 1.1, game.player.r * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  drawGlowCircle(game.player.x, game.player.y - lift, game.player.r + 12, '#9f7cff', 0.22);
+  ctx.fillStyle = game.player.isRunning ? '#ffffff' : '#dddcff';
+  ctx.beginPath();
+  ctx.arc(game.player.x, game.player.y - lift, game.player.r, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = '#68fff1';
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(game.player.x, game.player.y);
-  ctx.lineTo(game.player.x + Math.cos(game.player.facing) * 30, game.player.y + Math.sin(game.player.facing) * 30);
+  ctx.moveTo(game.player.x, game.player.y - lift);
+  ctx.lineTo(game.player.x + Math.cos(game.player.facing) * 30, game.player.y - lift + Math.sin(game.player.facing) * 30);
   ctx.stroke();
 }
 
@@ -510,10 +578,11 @@ document.addEventListener('keydown', (event) => {
   keys.add(event.code);
   if (event.code === 'Space') {
     event.preventDefault();
-    fireBasicAttack();
+    PlayerCombat.basicAttack();
   }
-  if (event.code === 'KeyQ') fireCompanionAbility();
-  if (event.code === 'KeyE') summonCompanion();
+  if (event.code === 'KeyQ') PlayerCombat.companionAbility();
+  if (event.code === 'KeyJ') PlayerMovement.jump();
+  if (event.code === 'KeyE') PlayerInteraction.interact();
   if (event.code === 'KeyR') resetGame();
 });
 
