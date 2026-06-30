@@ -9,6 +9,25 @@ const VIEW = { width: canvas.width, height: canvas.height };
 const keys = new Set();
 
 const GameMode = Object.freeze({ EXPLORE: 'explore', ARENA: 'arena', DOWNED: 'downed' });
+const Element = Object.freeze({ LUMIN: 'Lumin' });
+
+const CompanionCreatures = Object.freeze({
+  glowshroom: Object.freeze({
+    id: 'glowshroom',
+    name: 'Glowshroom',
+    element: Element.LUMIN,
+    role: 'Support / light creature',
+    ability: Object.freeze({
+      name: 'Light Pulse',
+      cost: 24,
+      cooldown: 2.6,
+      damage: 26,
+      projectileRadius: 18,
+      color: '#f7ff9a',
+      canActivateLightObjects: true,
+    }),
+  }),
+});
 const LoopStep = Object.freeze({
   FIND_SEED: 'findSeed',
   SUMMON_COMPANION: 'summonCompanion',
@@ -28,9 +47,7 @@ const TUNING = Object.freeze({
   playerHealth: 100,
   playerEnergy: 100,
   basicAttackCost: 10,
-  companionAbilityCost: 28,
   basicDamage: 16,
-  companionDamage: 34,
   arenaTriggerDistance: 155,
   enemyTouchDamagePerSecond: 18,
 });
@@ -40,7 +57,7 @@ let messageTimer = 0;
 
 const level = {
   spawn: { x: 0, y: 160 },
-  seed: { id: 'seed-01', x: -430, y: -155, r: 16, collected: false, pulse: 0 },
+  seed: { id: 'seed-01', type: 'SporeSeed', creatureId: 'glowshroom', x: -430, y: -155, r: 16, collected: false, pulse: 0 },
   enemy: { id: 'guardian-01', x: 485, y: -115, r: 25, hp: 120, maxHp: 120, defeated: false, active: false, stun: 0 },
   anomaly: { id: 'anomaly-01', x: 155, y: 280, r: 82, stabilized: false, intensity: 0 },
   corruption: { x: 470, y: -105, r: 145 },
@@ -77,7 +94,8 @@ const game = {
   loopStep: LoopStep.FIND_SEED,
   camera: { x: 0, y: 0 },
   player: { x: 0, y: 160, z: 0, vz: 0, r: 18, hp: TUNING.playerHealth, energy: TUNING.playerEnergy, facing: 0, isRunning: false, isGrounded: true },
-  companion: { unlocked: false, x: 0, y: 0, r: 13, abilityCooldown: 0, abilityMaxCooldown: 3.2 },
+  unlockedCreatureIds: [],
+  companion: { creatureId: null, x: 0, y: 0, r: 13, abilityCooldown: 0 },
   projectiles: [],
   effects: [],
 };
@@ -86,7 +104,8 @@ function resetGame() {
   game.mode = GameMode.EXPLORE;
   game.loopStep = LoopStep.FIND_SEED;
   Object.assign(game.player, { ...level.spawn, z: 0, vz: 0, hp: TUNING.playerHealth, energy: TUNING.playerEnergy, facing: 0, isRunning: false, isGrounded: true });
-  Object.assign(game.companion, { unlocked: false, x: level.spawn.x - 48, y: level.spawn.y + 42, abilityCooldown: 0 });
+  game.unlockedCreatureIds = [];
+  Object.assign(game.companion, { creatureId: null, x: level.spawn.x - 48, y: level.spawn.y + 42, abilityCooldown: 0 });
   Object.assign(level.seed, { collected: false, pulse: 0 });
   Object.assign(level.enemy, { x: 485, y: -115, hp: level.enemy.maxHp, defeated: false, active: false, stun: 0 });
   Object.assign(level.anomaly, { stabilized: false, intensity: 0 });
@@ -186,23 +205,38 @@ function updateSeed(dt) {
 
 function collectSeed() {
   level.seed.collected = true;
+  unlockCreatureFromSeed(level.seed);
   game.loopStep = LoopStep.SUMMON_COMPANION;
-  spawnEffect(level.seed.x, level.seed.y, '#f5ff89', 16);
-  showMessage('Spore seed collected. Press E to summon its companion creature.');
+  spawnEffect(level.seed.x, level.seed.y, getCreature(level.seed.creatureId).ability.color, 16);
+  showMessage('Spore seed collected. Glowshroom unlocked. Press E to grow it.');
+}
+
+function unlockCreatureFromSeed(seed) {
+  if (!game.unlockedCreatureIds.includes(seed.creatureId)) {
+    game.unlockedCreatureIds.push(seed.creatureId);
+  }
 }
 
 function summonCompanion() {
-  if (!level.seed.collected || game.companion.unlocked) return;
-  game.companion.unlocked = true;
+  if (!level.seed.collected || game.companion.creatureId) return;
+  spawnCompanion(level.seed.creatureId);
+}
+
+function spawnCompanion(creatureId) {
+  const creature = getCreature(creatureId);
+  if (!creature || !game.unlockedCreatureIds.includes(creatureId)) return;
+
+  game.companion.creatureId = creatureId;
   game.companion.x = game.player.x - 52;
   game.companion.y = game.player.y + 38;
+  game.companion.abilityCooldown = 0;
   game.loopStep = LoopStep.FIND_ENEMY;
-  spawnEffect(game.companion.x, game.companion.y, '#65ffd6', 20);
-  showMessage('Companion summoned. Find the corrupted guardian and use Q for its ability.');
+  spawnEffect(game.companion.x, game.companion.y, creature.ability.color, 20);
+  showMessage(`${creature.name} grown. Press Q to trigger ${creature.ability.name}.`);
 }
 
 function updateCompanion(dt) {
-  if (!game.companion.unlocked) return;
+  if (!game.companion.creatureId) return;
 
   const followAngle = game.player.facing + Math.PI * 0.78;
   const target = {
@@ -215,7 +249,7 @@ function updateCompanion(dt) {
 }
 
 function updateArenaTrigger() {
-  if (game.mode !== GameMode.EXPLORE || level.enemy.defeated || !game.companion.unlocked) return;
+  if (game.mode !== GameMode.EXPLORE || level.enemy.defeated || !game.companion.creatureId) return;
   if (distance(game.player, level.enemy) > TUNING.arenaTriggerDistance) return;
 
   game.mode = GameMode.ARENA;
@@ -224,16 +258,16 @@ function updateArenaTrigger() {
   level.arena.active = true;
   level.arena.x = (game.player.x + level.enemy.x) / 2;
   level.arena.y = (game.player.y + level.enemy.y) / 2;
-  showMessage('Combat arena formed. Space: basic attack. Q: companion spore burst.');
+  showMessage('Combat arena formed. Space: basic attack. Q: Glowshroom Light Pulse.');
 }
 
 function updateAnomaly(dt) {
   const inside = distance(game.player, level.anomaly) < level.anomaly.r;
   level.anomaly.intensity = lerp(level.anomaly.intensity, inside ? 1 : 0.35, dt * 2.2);
 
-  if (inside && level.enemy.defeated && game.companion.unlocked && !level.anomaly.stabilized) {
+  if (inside && level.enemy.defeated && hasActiveCompanionAbilityTag('canActivateLightObjects') && !level.anomaly.stabilized) {
     level.anomaly.stabilized = true;
-    spawnEffect(level.anomaly.x, level.anomaly.y, '#65ffd6', 26);
+    spawnEffect(level.anomaly.x, level.anomaly.y, getActiveCompanion()?.ability.color ?? '#f7ff9a', 26);
     showMessage('Anomaly stabilized. The cave remains open for exploration.');
   }
 }
@@ -294,24 +328,27 @@ function fireBasicAttack() {
 }
 
 function fireCompanionAbility() {
-  if (!game.companion.unlocked || game.mode !== GameMode.ARENA) return;
-  if (game.companion.abilityCooldown > 0 || game.player.energy < TUNING.companionAbilityCost) return;
+  const creature = getActiveCompanion();
+  if (!creature || game.mode !== GameMode.ARENA) return;
+  if (game.companion.abilityCooldown > 0 || game.player.energy < creature.ability.cost) return;
 
-  game.player.energy -= TUNING.companionAbilityCost;
-  game.companion.abilityCooldown = game.companion.abilityMaxCooldown;
+  game.player.energy -= creature.ability.cost;
+  game.companion.abilityCooldown = creature.ability.cooldown;
   game.projectiles.push({
     type: 'companionAbility',
-    owner: 'companion',
+    abilityName: creature.ability.name,
+    owner: creature.id,
+    element: creature.element,
     x: game.companion.x,
     y: game.companion.y,
-    r: 16,
+    r: creature.ability.projectileRadius,
     angle: Math.atan2(level.enemy.y - game.companion.y, level.enemy.x - game.companion.x),
     speed: 360,
-    damage: TUNING.companionDamage,
+    damage: creature.ability.damage,
     life: 1.6,
-    color: '#65ffd6',
+    color: creature.ability.color,
   });
-  showMessage('Companion ability: Verdant Burst launched.');
+  showMessage(`${creature.name} used ${creature.ability.name}.`);
 }
 
 function updateProjectiles(dt) {
@@ -331,7 +368,7 @@ function updateProjectiles(dt) {
 function damageEnemy(amount, sourceType) {
   level.enemy.hp = Math.max(0, level.enemy.hp - amount);
   level.enemy.stun = sourceType === 'companionAbility' ? 0.45 : 0.12;
-  spawnEffect(level.enemy.x, level.enemy.y, sourceType === 'companionAbility' ? '#65ffd6' : '#ff3e68', sourceType === 'companionAbility' ? 18 : 9);
+  spawnEffect(level.enemy.x, level.enemy.y, sourceType === 'companionAbility' ? getActiveCompanion()?.ability.color ?? '#f7ff9a' : '#ff3e68', sourceType === 'companionAbility' ? 18 : 9);
 
   if (level.enemy.hp <= 0) completeCombat();
 }
@@ -380,9 +417,9 @@ function updateHud() {
     [LoopStep.FIND_SEED]: distance(game.player, level.seed) <= game.player.r + level.seed.r + 34
       ? '1-3/9 Spore seed found. Press E to collect it.'
       : '1/9 Explore the mushroom level and find the glowing spore seed.',
-    [LoopStep.SUMMON_COMPANION]: '2-4/9 Seed collected. Press E to summon your companion creature.',
+    [LoopStep.SUMMON_COMPANION]: '2-4/9 SporeSeed collected. Press E to grow Glowshroom.',
     [LoopStep.FIND_ENEMY]: '5/9 Companion active. Explore east and approach the corrupted guardian.',
-    [LoopStep.FIGHT_ENEMY]: '6-7/9 Arena combat: Space for basic attacks, Q for companion ability.',
+    [LoopStep.FIGHT_ENEMY]: '6-7/9 Arena combat: Space for basic attacks, Q for Glowshroom Light Pulse.',
     [LoopStep.EXPLORE_AFTER_VICTORY]: level.anomaly.stabilized
       ? 'Alien biome complete: seed, enemy, and anomaly are all readable and playable.'
       : '8-9/9 Enemy defeated. Explore the south anomaly zone to stabilize it.',
@@ -396,7 +433,7 @@ function updateHud() {
     Health: ${Math.ceil(game.player.hp)} / ${TUNING.playerHealth}<br />
     Energy: ${Math.ceil(game.player.energy)} / ${TUNING.playerEnergy}<br />
     Seed: ${level.seed.collected ? 'Collected' : 'Unfound'}<br />
-    Companion: ${game.companion.unlocked ? `Ready (${game.companion.abilityCooldown.toFixed(1)}s)` : 'Locked'}<br />
+    Companion: ${getActiveCompanion() ? `${getActiveCompanion().name} / ${getActiveCompanion().element} (${game.companion.abilityCooldown.toFixed(1)}s)` : 'Locked'}<br />
     Enemy: ${level.enemy.defeated ? 'Defeated' : `${Math.ceil(level.enemy.hp)} HP`}<br />
     Anomaly: ${level.anomaly.stabilized ? 'Stable' : 'Unstable'}
   `;
@@ -478,7 +515,7 @@ function drawLevel(time) {
 function drawEntities(time) {
   if (!level.enemy.defeated) drawEnemyPlaceholder(time);
   drawPlayerPlaceholder();
-  if (game.companion.unlocked) drawCompanionPlaceholder(time);
+  if (game.companion.creatureId) drawCompanionPlaceholder(time);
   for (const projectile of game.projectiles) drawGlowCircle(projectile.x, projectile.y, projectile.r * 2.3, projectile.color, 0.75);
   for (const effect of game.effects) drawGlowCircle(effect.x, effect.y, 4 + effect.life * 4, effect.color, effect.life);
 }
@@ -644,14 +681,24 @@ function drawPlayerPlaceholder() {
 }
 
 function drawCompanionPlaceholder(time) {
-  drawGlowCircle(game.companion.x, game.companion.y, 32 + Math.sin(time * 5) * 4, '#65ffd6', 0.22);
-  ctx.fillStyle = '#65ffd6';
+  const creature = getActiveCompanion();
+  const glowColor = creature?.ability.color ?? '#f7ff9a';
+  drawGlowCircle(game.companion.x, game.companion.y, 34 + Math.sin(time * 5) * 4, glowColor, 0.26);
+
+  ctx.fillStyle = '#f7f0d0';
   ctx.beginPath();
-  ctx.ellipse(game.companion.x, game.companion.y, game.companion.r * 1.25, game.companion.r, Math.sin(time) * 0.3, 0, Math.PI * 2);
+  ctx.ellipse(game.companion.x, game.companion.y + 7, game.companion.r * 0.72, game.companion.r, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  ctx.fillStyle = glowColor;
+  ctx.beginPath();
+  ctx.ellipse(game.companion.x, game.companion.y - 5, game.companion.r * 1.35, game.companion.r * 0.7, Math.sin(time) * 0.15, Math.PI, 0);
+  ctx.fill();
+
   ctx.fillStyle = '#17254a';
   ctx.beginPath();
-  ctx.arc(game.companion.x + 5, game.companion.y - 2, 3, 0, Math.PI * 2);
+  ctx.arc(game.companion.x - 4, game.companion.y + 4, 2.4, 0, Math.PI * 2);
+  ctx.arc(game.companion.x + 5, game.companion.y + 4, 2.4, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -716,6 +763,19 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('keyup', (event) => keys.delete(event.code));
+
+function getCreature(creatureId) {
+  return CompanionCreatures[creatureId] ?? null;
+}
+
+function getActiveCompanion() {
+  return getCreature(game.companion.creatureId);
+}
+
+function hasActiveCompanionAbilityTag(tag) {
+  const creature = getActiveCompanion();
+  return Boolean(creature?.ability?.[tag]);
+}
 
 resetGame();
 requestAnimationFrame(frame);
