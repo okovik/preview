@@ -42,6 +42,8 @@ const level = {
   spawn: { x: 0, y: 160 },
   seed: { id: 'seed-01', x: -430, y: -155, r: 16, collected: false, pulse: 0 },
   enemy: { id: 'guardian-01', x: 485, y: -115, r: 25, hp: 120, maxHp: 120, defeated: false, active: false, stun: 0 },
+  anomaly: { id: 'anomaly-01', x: 155, y: 280, r: 82, stabilized: false, intensity: 0 },
+  corruption: { x: 470, y: -105, r: 145 },
   arena: { x: 0, y: 0, r: 215, alpha: 0, active: false },
   mushrooms: [
     [-560, -230, 72, '#55f4df'], [-470, 95, 48, '#c27cff'], [-330, -20, 95, '#67f0ff'],
@@ -50,6 +52,24 @@ const level = {
     [-610, 255, 64, '#a18cff'], [-230, 260, 78, '#5fffe7'], [50, -365, 50, '#ff8bd6'],
   ],
   crystals: [[-90, -120], [150, -55], [410, -260], [-520, 210], [285, 300], [-665, -60]],
+  roots: [
+    { x: -690, y: 270, length: 360, angle: -0.22, width: 22 },
+    { x: -250, y: 325, length: 320, angle: 0.14, width: 18 },
+    { x: 65, y: 220, length: 260, angle: -0.55, width: 16 },
+    { x: 365, y: 205, length: 310, angle: 0.42, width: 20 },
+    { x: -520, y: -320, length: 350, angle: 0.36, width: 18 },
+    { x: 45, y: -330, length: 295, angle: -0.18, width: 14 },
+  ],
+  rocks: [
+    { x: -610, y: -40, rx: 42, ry: 24 }, { x: -375, y: 235, rx: 55, ry: 30 },
+    { x: -125, y: 95, rx: 36, ry: 22 }, { x: 245, y: -315, rx: 46, ry: 28 },
+    { x: 600, y: 125, rx: 58, ry: 32 }, { x: 675, y: -245, rx: 36, ry: 22 },
+  ],
+  pathMarkers: [
+    { x: -430, y: -155, label: 'Spore Seed' },
+    { x: 485, y: -115, label: 'Enemy Encounter' },
+    { x: 155, y: 280, label: 'Anomaly Zone' },
+  ],
 };
 
 const game = {
@@ -69,6 +89,7 @@ function resetGame() {
   Object.assign(game.companion, { unlocked: false, x: level.spawn.x - 48, y: level.spawn.y + 42, abilityCooldown: 0 });
   Object.assign(level.seed, { collected: false, pulse: 0 });
   Object.assign(level.enemy, { x: 485, y: -115, hp: level.enemy.maxHp, defeated: false, active: false, stun: 0 });
+  Object.assign(level.anomaly, { stabilized: false, intensity: 0 });
   Object.assign(level.arena, { x: 0, y: 0, active: false, alpha: 0 });
   game.projectiles.length = 0;
   game.effects.length = 0;
@@ -82,6 +103,7 @@ function update(dt) {
   updateCompanion(dt);
   updateArenaTrigger();
   updateEnemy(dt);
+  updateAnomaly(dt);
   PlayerCombat.updateProjectiles(dt);
   updateEffects(dt);
   updateCamera(dt);
@@ -203,6 +225,17 @@ function updateArenaTrigger() {
   level.arena.x = (game.player.x + level.enemy.x) / 2;
   level.arena.y = (game.player.y + level.enemy.y) / 2;
   showMessage('Combat arena formed. Space: basic attack. Q: companion spore burst.');
+}
+
+function updateAnomaly(dt) {
+  const inside = distance(game.player, level.anomaly) < level.anomaly.r;
+  level.anomaly.intensity = lerp(level.anomaly.intensity, inside ? 1 : 0.35, dt * 2.2);
+
+  if (inside && level.enemy.defeated && game.companion.unlocked && !level.anomaly.stabilized) {
+    level.anomaly.stabilized = true;
+    spawnEffect(level.anomaly.x, level.anomaly.y, '#65ffd6', 26);
+    showMessage('Anomaly stabilized. The cave remains open for exploration.');
+  }
 }
 
 function updateEnemy(dt) {
@@ -350,7 +383,9 @@ function updateHud() {
     [LoopStep.SUMMON_COMPANION]: '2-4/9 Seed collected. Press E to summon your companion creature.',
     [LoopStep.FIND_ENEMY]: '5/9 Companion active. Explore east and approach the corrupted guardian.',
     [LoopStep.FIGHT_ENEMY]: '6-7/9 Arena combat: Space for basic attacks, Q for companion ability.',
-    [LoopStep.EXPLORE_AFTER_VICTORY]: '8-9/9 Enemy defeated. You are back in exploration mode; keep exploring.',
+    [LoopStep.EXPLORE_AFTER_VICTORY]: level.anomaly.stabilized
+      ? 'Alien biome complete: seed, enemy, and anomaly are all readable and playable.'
+      : '8-9/9 Enemy defeated. Explore the south anomaly zone to stabilize it.',
   };
 
   objectiveEl.textContent = objectives[game.loopStep];
@@ -362,7 +397,8 @@ function updateHud() {
     Energy: ${Math.ceil(game.player.energy)} / ${TUNING.playerEnergy}<br />
     Seed: ${level.seed.collected ? 'Collected' : 'Unfound'}<br />
     Companion: ${game.companion.unlocked ? `Ready (${game.companion.abilityCooldown.toFixed(1)}s)` : 'Locked'}<br />
-    Enemy: ${level.enemy.defeated ? 'Defeated' : `${Math.ceil(level.enemy.hp)} HP`}
+    Enemy: ${level.enemy.defeated ? 'Defeated' : `${Math.ceil(level.enemy.hp)} HP`}<br />
+    Anomaly: ${level.anomaly.stabilized ? 'Stable' : 'Unstable'}
   `;
 }
 
@@ -427,8 +463,14 @@ function drawLevel(time) {
     ctx.stroke();
   }
 
+  drawPlayablePath();
+  drawCorruptedArea(time);
+  drawAnomalyZone(time);
+  for (const root of level.roots) drawRootPlaceholder(root);
+  for (const rock of level.rocks) drawRockPlaceholder(rock);
   for (const [x, y, size, color] of level.mushrooms) drawMushroomPlaceholder(x, y, size, color, time);
   for (const [x, y] of level.crystals) drawCrystalPlaceholder(x, y, time);
+  for (const marker of level.pathMarkers) drawLevelMarker(marker);
   drawSeedPlaceholder(time);
   drawArenaPlaceholder(time);
 }
@@ -439,6 +481,93 @@ function drawEntities(time) {
   if (game.companion.unlocked) drawCompanionPlaceholder(time);
   for (const projectile of game.projectiles) drawGlowCircle(projectile.x, projectile.y, projectile.r * 2.3, projectile.color, 0.75);
   for (const effect of game.effects) drawGlowCircle(effect.x, effect.y, 4 + effect.life * 4, effect.color, effect.life);
+}
+
+function drawPlayablePath() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(104, 255, 241, 0.18)';
+  ctx.lineWidth = 52;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(level.spawn.x, level.spawn.y);
+  ctx.quadraticCurveTo(-250, 45, level.seed.x, level.seed.y);
+  ctx.moveTo(level.spawn.x, level.spawn.y);
+  ctx.quadraticCurveTo(230, 45, level.enemy.x, level.enemy.y);
+  ctx.moveTo(level.spawn.x, level.spawn.y);
+  ctx.quadraticCurveTo(20, 260, level.anomaly.x, level.anomaly.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCorruptedArea(time) {
+  const area = level.corruption;
+  drawGlowCircle(area.x, area.y, area.r + Math.sin(time * 3) * 8, '#ff3e68', 0.16);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 62, 104, 0.55)';
+  ctx.lineWidth = 5;
+  ctx.setLineDash([12, 10]);
+  ctx.lineDashOffset = -time * 32;
+  ctx.beginPath();
+  ctx.arc(area.x, area.y, area.r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAnomalyZone(time) {
+  const anomaly = level.anomaly;
+  const color = anomaly.stabilized ? '#65ffd6' : '#ff3e68';
+  drawGlowCircle(anomaly.x, anomaly.y, anomaly.r + 14 * level.anomaly.intensity + Math.sin(time * 4) * 5, color, anomaly.stabilized ? 0.18 : 0.2);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4;
+  ctx.globalAlpha = anomaly.stabilized ? 0.65 : 0.85;
+  ctx.beginPath();
+  ctx.arc(anomaly.x, anomaly.y, anomaly.r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawRootPlaceholder(root) {
+  ctx.save();
+  ctx.translate(root.x, root.y);
+  ctx.rotate(root.angle);
+  ctx.strokeStyle = '#31405f';
+  ctx.lineWidth = root.width;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-root.length / 2, 0);
+  ctx.bezierCurveTo(-root.length * 0.2, -26, root.length * 0.2, 26, root.length / 2, 0);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(104, 255, 241, 0.18)';
+  ctx.lineWidth = Math.max(3, root.width * 0.18);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawRockPlaceholder(rock) {
+  ctx.fillStyle = '#25334d';
+  ctx.beginPath();
+  ctx.ellipse(rock.x, rock.y, rock.rx, rock.ry, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(128, 255, 240, 0.12)';
+  ctx.stroke();
+}
+
+function drawLevelMarker(marker) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(5, 10, 20, 0.58)';
+  ctx.strokeStyle = 'rgba(104, 255, 241, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(marker.x - 54, marker.y + 34, 108, 24, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#dffefa';
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(marker.label, marker.x, marker.y + 50);
+  ctx.restore();
 }
 
 function drawMushroomPlaceholder(x, y, size, color, time) {
