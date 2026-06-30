@@ -1,0 +1,17 @@
+{
+  "name": "sporax-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SporaX vertical slice prototype - alien fungal adventure creature collecting game.",
+  "scripts": {
+    "start": "python3 -m http.server 4173",
+    "check": "node --check src/main.js"
+  },
+  "keywords": [
+    "game",
+    "prototype",
+    "canvas",
+    "sporax"
+  ],
+  "license": "UNLICENSED"
+}
