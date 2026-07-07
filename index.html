@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SporaX Vertical Slice Prototype</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <main id="game-shell" aria-label="SporaX playable prototype">
+      <canvas id="game" width="1280" height="720"></canvas>
+      <section id="overlay" aria-live="polite">
+        <div class="brand">
+          <span class="kicker">TOI-1338 X</span>
+          <h1>SporaX</h1>
+        </div>
+        <div id="objective"></div>
+        <div id="stats"></div>
+        <div class="controls">
+          <strong>Controls</strong>
+          <span>WASD / Arrows: move</span>
+          <span>Shift: run</span>
+          <span>J: jump</span>
+          <span>E: interact</span>
+          <span>Space: basic attack</span>
+          <span>Q: companion ability</span>
+          <span>R: restart</span>
+        </div>
+      </section>
+      <div id="message"></div>
+    </main>
+    <script src="src/main.js"></script>
+  </body>
+</html>
